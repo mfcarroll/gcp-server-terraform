@@ -50,7 +50,6 @@ resource "google_compute_instance" "default" {
   name         = "app-server-1"
   machine_type = "e2-micro"
   
-  # --- THIS LINE IS THE FIX ---
   # Allows Terraform to stop and restart the VM for updates that require it.
   allow_stopping_for_update = true
 
@@ -72,8 +71,12 @@ resource "google_compute_instance" "default" {
     scopes = ["cloud-platform"]
   }
 
-  metadata = {
-    ssh-keys = "dev:${file("~/.ssh/id_ed25519_gcp.pub")}"
+metadata = {
+    # The ssh-keys metadata can accept multiple keys, one per line
+    ssh-keys = <<-EOT
+      dev:${file("~/.ssh/id_ed25519_gcp.pub")}
+      dev:${file("~/.ssh/id_ed25519_cicd.pub")}
+    EOT
   }
 
   tags = ["http-server", "https-server"]
