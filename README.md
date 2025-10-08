@@ -1,26 +1,19 @@
 # GCP Server Infrastructure (Terraform)
 
-This repository contains the Terraform configuration for provisioning the foundational infrastructure on Google Cloud Platform. This setup is the bedrock of the entire application hosting environment and is typically only run once or when making significant changes to the underlying infrastructure.
+This repository contains the Terraform configuration for provisioning the foundational infrastructure on Google Cloud Platform. This setup is the bedrock of the entire application hosting environment and is typically only run once.
 
 ## Architecture Overview
+This Terraform configuration creates the core, non-application-specific resources required to run the containerized application platform. It is the first step in setting up the environment.
 
-This Terraform configuration creates the core, non-application-specific resources required to run the containerized application platform. It is the first step in setting up the environment and provides the server and services that the Ansible configuration will later manage.
+* **Server Provisioning**: Deploys a GCE VM instance, a static IP, and necessary firewall rules.
+* **Artifact Registry**: Creates a private Docker repository to securely store application images.
+* **Service Accounts**: Configures the necessary IAM service accounts and permissions for the VM to access the Artifact Registry.
 
-## Resources Created
-
-This configuration will provision the following resources in your GCP project:
-
-* **A Google Compute Engine (GCE) VM instance (`e2-micro`)**: This serves as the main application server where all Docker containers will run.
-* **A static public IP address**: This ensures the server's IP address does not change, which is crucial for DNS configuration.
-* **A private Docker repository in Google Artifact Registry**: This provides a secure, private location to store and manage your application's Docker images.
-* **Dedicated Service Accounts**:
-    * `app-server-identity`: A dedicated service account for the VM instance with the necessary permissions to pull images from the private Artifact Registry.
-* **Firewall Rules**: A rule named `allow-http-https` that opens ports 80 and 443 to allow public web traffic to the server.
+Once this infrastructure is provisioned, server state is managed by the Ansible configuration in the `mfcarroll/gcp-server-config` repository, and application deployments are handled via the `mfcarroll/gcp-service-template`.
 
 ---
 
 ## Initial Setup
-
 1.  **Authenticate with GCP**: Before running Terraform, ensure your local machine is authenticated with the `gcloud` CLI and has the necessary permissions to create resources in your project.
     ```bash
     gcloud auth application-default login
@@ -29,7 +22,6 @@ This configuration will provision the following resources in your GCP project:
 3.  **SSH Key**: This configuration requires an SSH key pair to be present on your local machine at `~/.ssh/id_ed25519_gcp` (private key) and `~/.ssh/id_ed25519_gcp.pub` (public key) to grant you SSH access to the server.
 
 ## Usage
-
 This configuration should be applied from your local machine.
 
 1.  **Initialize Terraform**:
