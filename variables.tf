@@ -15,3 +15,9 @@ variable "gcp_zone" {
   type        = string
   default     = "us-central1-c"
 }
+
+variable "cloudflare_tunnel_token" {
+  description = "The token for the Cloudflare Tunnel"
+  type        = string
+  sensitive   = true
+}

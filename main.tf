@@ -42,14 +42,13 @@ resource "google_artifact_registry_repository_iam_member" "reader_binding" {
   member     = "serviceAccount:${google_service_account.vm_service_account.email}"
 }
 
-resource "google_compute_address" "static_ip" {
-  name = "vm-static-ip"
-}
+# [REMOVED] google_compute_address (Static IP) to save costs
+# [REMOVED] google_compute_firewall (Cloudflare Tunnel creates an outbound connection)
 
 resource "google_compute_instance" "default" {
   name         = "app-server-1"
   machine_type = "e2-micro"
-  
+
   # Allows Terraform to stop and restart the VM for updates that require it.
   allow_stopping_for_update = true
 
@@ -62,7 +61,8 @@ resource "google_compute_instance" "default" {
   network_interface {
     network = "default"
     access_config {
-      nat_ip = google_compute_address.static_ip.address
+      # Leaving this empty assigns an Ephemeral IP.
+      # On e2-micro in free tier regions, this is typically free.
     }
   }
 
@@ -71,24 +71,30 @@ resource "google_compute_instance" "default" {
     scopes = ["cloud-platform"]
   }
 
-metadata = {
-    # The ssh-keys metadata can accept multiple keys, one per line
+  metadata = {
     ssh-keys = <<-EOT
       dev:${file("~/.ssh/id_ed25519_gcp.pub")}
       dev:${file("~/.ssh/id_ed25519_cicd.pub")}
     EOT
   }
 
-  tags = ["http-server", "https-server"]
-}
+  # Startup script to install and configure Cloudflare Tunnel automatically
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    set -e
+    
+    # 1. Add Cloudflare GPG key and repository
+    mkdir -p --mode=0755 /usr/share/keyrings
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg | tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
+    echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list
+    
+    # 2. Install cloudflared
+    apt-get update && apt-get install -y cloudflared
 
-resource "google_compute_firewall" "allow_http_https" {
-  name    = "allow-http-https"
-  network = "default"
-  allow {
-    protocol = "tcp"
-    ports    = ["80", "443"]
-  }
-  target_tags   = ["http-server", "https-server"]
-  source_ranges = ["0.0.0.0/0"]
+    # 3. Install and start the service with the provided token
+    if ! systemctl is-active --quiet cloudflared; then
+      cloudflared service install "${var.cloudflare_tunnel_token}" || true
+      systemctl start cloudflared
+    fi
+  EOT
 }

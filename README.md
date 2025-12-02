@@ -1,42 +1,61 @@
 # GCP Server Infrastructure (Terraform)
 
-This repository contains the Terraform configuration for provisioning the foundational infrastructure on Google Cloud Platform. This setup is the bedrock of the entire application hosting environment and is typically only run once.
+This repository contains the Terraform configuration for provisioning the foundational infrastructure on Google Cloud Platform.
+
+**Update:** This infrastructure now uses **Cloudflare Tunnel** for connectivity. The server does not have a static public IP and does not allow inbound connections from the internet. All traffic (SSH and HTTP) is routed securely through Cloudflare.
 
 ## Architecture Overview
-This Terraform configuration creates the core, non-application-specific resources required to run the containerized application platform. It is the first step in setting up the environment.
 
-* **Server Provisioning**: Deploys a GCE VM instance, a static IP, and necessary firewall rules.
-* **Artifact Registry**: Creates a private Docker repository to securely store application images.
-* **Service Accounts**: Configures the necessary IAM service accounts and permissions for the VM to access the Artifact Registry.
+- **Server Provisioning**: Deploys a GCE VM instance (e2-micro) with an ephemeral IP (cost-optimized).
+- **Cloudflare Tunnel**: Automatically installed on the VM to secure ingress traffic.
+- **Artifact Registry**: Creates a private Docker repository.
 
-Once this infrastructure is provisioned, server state is managed by the Ansible configuration in the `mfcarroll/gcp-server-config` repository, and application deployments are handled via the `mfcarroll/gcp-service-template`.
+## Migration & Initial Setup
 
----
+### Step 1: Create Cloudflare Tunnel (Manual Step)
 
-## Initial Setup
-1.  **Authenticate with GCP**: Before running Terraform, ensure your local machine is authenticated with the `gcloud` CLI and has the necessary permissions to create resources in your project.
-    ```bash
-    gcloud auth application-default login
+Because this is a one-time setup involving a third-party secret, we generate the tunnel in the Cloudflare Dashboard:
+
+1.  Log in to Cloudflare Zero Trust > **Networks** > **Tunnels**.
+2.  Click **Create a Tunnel**. Select **Cloudflared**.
+3.  Name it `gcp-server` and save.
+4.  **Copy the Tunnel Token** (It looks like a long base64 string). You do _not_ need to run the installation commands shown on the screen; Terraform will do that.
+5.  In the **Public Hostnames** tab of the tunnel config:
+    - Add a hostname for SSH: e.g., `ssh.yourdomain.com` -> Service: `ssh://localhost:22`
+    - Add a wildcard for apps: `*.apps.yourdomain.com` -> Service: `http://localhost:80`
+
+### Step 2: Configure Terraform Secrets
+
+1.  Create a file named `terraform.tfvars` in this directory (do not commit this file).
+2.  Add your tunnel token:
+    ```hcl
+    cloudflare_tunnel_token = "eyJhIjoi..."
     ```
-2.  **Configure Project**: Open `variables.tf` and ensure the `gcp_project_id` default value is set to your correct GCP Project ID. The default is currently set to `matthewc`.
-3.  **SSH Key**: This configuration requires an SSH key pair to be present on your local machine at `~/.ssh/id_ed25519_gcp` (private key) and `~/.ssh/id_ed25519_gcp.pub` (public key) to grant you SSH access to the server.
 
-## Usage
-This configuration should be applied from your local machine.
+### Step 3: Provision Infrastructure
 
-1.  **Initialize Terraform**:
-    ```bash
-    terraform init
+1.  **Initialize**: `terraform init`
+2.  **Apply**: `terraform apply`
+    - _Note:_ If you are migrating from the old static IP setup, Terraform will destroy the Static IP and Firewall resources. This will immediately drop any existing SSH connections.
+
+### Step 4: Configure Local SSH Access
+
+Since the server has no public IP, you must connect via the Cloudflare Tunnel.
+
+1.  Install `cloudflared` on your local machine.
+2.  Update your `~/.ssh/config`:
     ```
-2.  **Apply Configuration**:
-    ```bash
-    terraform apply
+    Host gcp-server
+      HostName ssh.yourdomain.com
+      User dev
+      IdentityFile ~/.ssh/id_ed25519_gcp
+      ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h
     ```
-    Terraform will show you a plan of the resources to be created. Review the plan and type `yes` to approve and begin provisioning.
+3.  Connect: `ssh gcp-server`
 
-## Outputs
+### Step 5: Update CI/CD Secrets
 
-After a successful run, Terraform will output the following values, which are needed for subsequent configuration steps:
+Go to your `gcp-service-template` repository (and any others) settings:
 
-* **`server_ip`**: The public IP address of the newly created server. This is the value you will use for your DNS `A` records.
-* **`artifact_registry_repository_url`**: The URL for your private Docker repository. This is used in your application's CI/CD pipeline to tag and push images.
+1.  Update `SERVER_IP` secret to your new SSH hostname: `ssh.yourdomain.com`.
+2.  Ensure your GitHub Action runners (in `gcp-server-config`) have `cloudflared` installed to utilize the ProxyCommand.
