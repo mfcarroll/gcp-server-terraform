@@ -6,3 +6,6 @@ crash.log
 
 # Ignore all auto-generated provider lock files
 .terraform.lock.hcl
+
+# Ignore Terraform secrets
+terraform.tfvars
