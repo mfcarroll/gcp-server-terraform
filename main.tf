@@ -42,6 +42,20 @@ resource "google_artifact_registry_repository_iam_member" "reader_binding" {
   member     = "serviceAccount:${google_service_account.vm_service_account.email}"
 }
 
+# Allow the Service Account to write Logs (for Ops Agent)
+resource "google_project_iam_member" "log_writer" {
+  project = var.gcp_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.vm_service_account.email}"
+}
+
+# Allow the Service Account to write Metrics (for Ops Agent)
+resource "google_project_iam_member" "metric_writer" {
+  project = var.gcp_project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.vm_service_account.email}"
+}
+
 # [REMOVED] google_compute_address (Static IP) to save costs
 # [REMOVED] google_compute_firewall (Cloudflare Tunnel creates an outbound connection)
 
