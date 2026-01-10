@@ -92,20 +92,35 @@ resource "google_compute_instance" "default" {
     EOT
   }
 
-  # Startup script to install and configure Cloudflare Tunnel automatically
+  # Startup script: Configures Users, Permissions, AND Cloudflare Tunnel
   metadata_startup_script = <<-EOT
     #!/bin/bash
     set -e
-    
-    # 1. Add Cloudflare GPG key and repository
+
+    # --- 1. User & Permissions Setup ---
+    # Ensure the dev user exists
+    if ! id "dev" &>/dev/null; then
+        useradd -m -s /bin/bash dev
+    fi
+
+    # Grant passwordless sudo to dev (Critical for Ansible)
+    echo "dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/dev
+    chmod 0440 /etc/sudoers.d/dev
+
+    # Add dev to the docker group
+    groupadd docker || true
+    usermod -aG docker dev
+
+    # --- 2. Cloudflare Tunnel Setup ---
+    # Add Cloudflare GPG key and repository
     mkdir -p --mode=0755 /usr/share/keyrings
     curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg | tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
     echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list
     
-    # 2. Install cloudflared
+    # Install cloudflared
     apt-get update && apt-get install -y cloudflared
 
-    # 3. Install and start the service with the provided token
+    # Install and start the service with the provided token
     if ! systemctl is-active --quiet cloudflared; then
       cloudflared service install "${var.cloudflare_tunnel_token}" || true
       systemctl start cloudflared
