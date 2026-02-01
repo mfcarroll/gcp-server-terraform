@@ -58,20 +58,17 @@ resource "google_project_iam_member" "metric_writer" {
 
 # Allow WireGuard UDP traffic on Port 53
 # Required because Cloudflare Tunnel does not proxy UDP, so we need a direct "side door".
-resource "google_compute_firewall" "allow_wireguard" {
-  name    = "allow-wireguard-53"
+resource "google_compute_firewall" "allow_wireguard_multiport" {
+  name    = "allow-wireguard-multiport"
   network = "default"
 
   allow {
     protocol = "udp"
-    ports    = ["53"]
+    # 51820 (Standard), 53 (DNS), 443 (HTTPS/QUIC), 80 (HTTP)
+    ports    = ["51820", "53", "443", "80"]
   }
 
-  # Allow from anywhere (WireGuard keys provide the security)
   source_ranges = ["0.0.0.0/0"]
-  
-  # Apply to all instances (simplest) or you can use target_tags if you prefer
-  # target_tags = ["wireguard-server"] 
 }
 
 resource "google_compute_instance" "default" {
