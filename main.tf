@@ -56,8 +56,23 @@ resource "google_project_iam_member" "metric_writer" {
   member  = "serviceAccount:${google_service_account.vm_service_account.email}"
 }
 
-# [REMOVED] google_compute_address (Static IP) to save costs
-# [REMOVED] google_compute_firewall (Cloudflare Tunnel creates an outbound connection)
+# Allow WireGuard UDP traffic on Port 53
+# Required because Cloudflare Tunnel does not proxy UDP, so we need a direct "side door".
+resource "google_compute_firewall" "allow_wireguard" {
+  name    = "allow-wireguard-53"
+  network = "default"
+
+  allow {
+    protocol = "udp"
+    ports    = ["53"]
+  }
+
+  # Allow from anywhere (WireGuard keys provide the security)
+  source_ranges = ["0.0.0.0/0"]
+  
+  # Apply to all instances (simplest) or you can use target_tags if you prefer
+  # target_tags = ["wireguard-server"] 
+}
 
 resource "google_compute_instance" "default" {
   name         = "app-server-1"
