@@ -64,8 +64,7 @@ resource "google_compute_firewall" "allow_wireguard_multiport" {
 
   allow {
     protocol = "udp"
-    # 51820 (Standard), 53 (DNS), 443 (HTTPS/QUIC), 80 (HTTP)
-    ports    = ["51820", "53", "443", "80"]
+    ports    = ["51820", "53", "443", "80", "4500"]
   }
 
   source_ranges = ["0.0.0.0/0"]
