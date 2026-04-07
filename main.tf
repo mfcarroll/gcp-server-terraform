@@ -70,6 +70,19 @@ resource "google_compute_firewall" "allow_wireguard_multiport" {
   source_ranges = ["0.0.0.0/0"]
 }
 
+# Allow TCP traffic for HTTP/HTTPS (Caddy & Let's Encrypt)
+resource "google_compute_firewall" "allow_http_https_tcp" {
+  name    = "allow-http-https-tcp"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+}
+
 resource "google_compute_instance" "default" {
   name         = "app-server-1"
   machine_type = "e2-micro"
@@ -98,8 +111,8 @@ resource "google_compute_instance" "default" {
 
   metadata = {
     ssh-keys = <<-EOT
-      dev:${file("~/.ssh/id_ed25519_gcp.pub")}
-      dev:${file("~/.ssh/id_ed25519_cicd.pub")}
+      dev:${file("~/.ssh/gcp-apps-server.pub")}
+      dev:${file("~/.ssh/gcp-apps-server-cicd.pub")}
     EOT
   }
 
