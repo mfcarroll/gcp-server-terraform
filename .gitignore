@@ -9,3 +9,7 @@ crash.log
 
 # Ignore Terraform secrets
 terraform.tfvars
+
+# Keys
+/keys/*
+!/keys/*.example

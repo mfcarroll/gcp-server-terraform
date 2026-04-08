@@ -21,3 +21,15 @@ variable "cloudflare_tunnel_token" {
   type        = string
   sensitive   = true
 }
+
+variable "wif_pool_id" {
+  description = "The ID of the Workload Identity Pool (e.g., github-pool)"
+  type        = string
+  default     = "github-pool"
+}
+
+variable "github_repository" {
+  description = "The GitHub repository allowed to impersonate the service account (e.g., owner/repo)"
+  type        = string
+  default     = "mfcarroll/gcp-server-config"
+}

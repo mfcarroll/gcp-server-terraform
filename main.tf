@@ -1,3 +1,5 @@
+# main.tf
+
 terraform {
   required_providers {
     google = {
@@ -13,18 +15,30 @@ provider "google" {
   zone    = var.gcp_zone
 }
 
+# Fetch current project details to get the Project Number
+data "google_project" "current" {}
+
+# --- SERVICE ACCOUNTS ---
+
+# 1. The RUN identity (used by the VM)
 resource "google_service_account" "vm_service_account" {
   account_id   = "app-server-identity"
   display_name = "Service Account for App Server VM"
 }
 
-# Enable the Artifact Registry API
+# 2. The BUILD identity (used by GitHub Actions)
+resource "google_service_account" "builder_service_account" {
+  account_id   = "github-actions-builder"
+  display_name = "GitHub Actions Builder"
+}
+
+# --- ARTIFACT REGISTRY SETUP ---
+
 resource "google_project_service" "artifactregistry" {
   service            = "artifactregistry.googleapis.com"
   disable_on_destroy = false
 }
 
-# Create the Docker repository in Artifact Registry
 resource "google_artifact_registry_repository" "docker_repo" {
   depends_on = [google_project_service.artifactregistry]
 
@@ -34,7 +48,26 @@ resource "google_artifact_registry_repository" "docker_repo" {
   format        = "DOCKER"
 }
 
-# Grant the new service account permission to pull images
+# --- PERMISSIONS: BUILDER (GitHub Actions) ---
+
+# Allow Builder to PUSH images
+resource "google_artifact_registry_repository_iam_member" "writer_binding" {
+  location   = google_artifact_registry_repository.docker_repo.location
+  repository = google_artifact_registry_repository.docker_repo.name
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.builder_service_account.email}"
+}
+
+# Allow GitHub to impersonate the Builder account
+resource "google_service_account_iam_member" "wif_impersonation" {
+  service_account_id = google_service_account.builder_service_account.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/${var.github_repository}"
+}
+
+# --- PERMISSIONS: RUNNER (VM Instance) ---
+
+# Allow VM to PULL images
 resource "google_artifact_registry_repository_iam_member" "reader_binding" {
   location   = google_artifact_registry_repository.docker_repo.location
   repository = google_artifact_registry_repository.docker_repo.name
@@ -42,52 +75,69 @@ resource "google_artifact_registry_repository_iam_member" "reader_binding" {
   member     = "serviceAccount:${google_service_account.vm_service_account.email}"
 }
 
-# Allow the Service Account to write Logs (for Ops Agent)
 resource "google_project_iam_member" "log_writer" {
   project = var.gcp_project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.vm_service_account.email}"
 }
 
-# Allow the Service Account to write Metrics (for Ops Agent)
 resource "google_project_iam_member" "metric_writer" {
   project = var.gcp_project_id
   role    = "roles/monitoring.metricWriter"
   member  = "serviceAccount:${google_service_account.vm_service_account.email}"
 }
 
-# Allow WireGuard UDP traffic on Port 53
-# Required because Cloudflare Tunnel does not proxy UDP, so we need a direct "side door".
+# --- WORKLOAD IDENTITY INFRASTRUCTURE ---
+
+resource "google_iam_workload_identity_pool" "github_pool" {
+  workload_identity_pool_id = var.wif_pool_id
+  display_name              = "GitHub Actions Pool"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_provider" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_pool.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-provider"
+  
+  attribute_mapping = {
+    "google.subject"             = "assertion.sub"
+    "attribute.repository"       = "assertion.repository"
+    "attribute.repository_owner" = "assertion.repository_owner"
+  }
+
+  attribute_condition = "attribute.repository_owner == '${split("/", var.github_repository)[0]}'"
+
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+# --- NETWORKING & FIREWALL ---
+
 resource "google_compute_firewall" "allow_wireguard_multiport" {
   name    = "allow-wireguard-multiport"
   network = "default"
-
   allow {
     protocol = "udp"
     ports    = ["51820", "53", "443", "80", "4500"]
   }
-
   source_ranges = ["0.0.0.0/0"]
 }
 
-# Allow TCP traffic for HTTP/HTTPS (Caddy & Let's Encrypt)
 resource "google_compute_firewall" "allow_http_https_tcp" {
   name    = "allow-http-https-tcp"
   network = "default"
-
   allow {
     protocol = "tcp"
     ports    = ["80", "443"]
   }
-
   source_ranges = ["0.0.0.0/0"]
 }
+
+# --- COMPUTE INSTANCE ---
 
 resource "google_compute_instance" "default" {
   name         = "app-server-1"
   machine_type = "e2-micro"
-
-  # Allows Terraform to stop and restart the VM for updates that require it.
   allow_stopping_for_update = true
 
   boot_disk {
@@ -100,7 +150,6 @@ resource "google_compute_instance" "default" {
     network = "default"
     access_config {
       # Leaving this empty assigns an Ephemeral IP.
-      # On e2-micro in free tier regions, this is typically free.
     }
   }
 
@@ -111,8 +160,8 @@ resource "google_compute_instance" "default" {
 
   metadata = {
     ssh-keys = <<-EOT
-      dev:${file("~/.ssh/gcp-apps-server.pub")}
-      dev:${file("~/.ssh/gcp-apps-server-cicd.pub")}
+      dev:${file("${path.root}/keys/gcp-apps-server.pub")}
+      dev:${file("${path.root}/keys/gcp-apps-server-cicd.pub")}
     EOT
   }
 
@@ -120,31 +169,17 @@ resource "google_compute_instance" "default" {
   metadata_startup_script = <<-EOT
     #!/bin/bash
     set -e
-
-    # --- 1. User & Permissions Setup ---
-    # Ensure the dev user exists
     if ! id "dev" &>/dev/null; then
         useradd -m -s /bin/bash dev
     fi
-
-    # Grant passwordless sudo to dev (Critical for Ansible)
     echo "dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/dev
     chmod 0440 /etc/sudoers.d/dev
-
-    # Add dev to the docker group
     groupadd docker || true
     usermod -aG docker dev
-
-    # --- 2. Cloudflare Tunnel Setup ---
-    # Add Cloudflare GPG key and repository
     mkdir -p --mode=0755 /usr/share/keyrings
     curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg | tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
     echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list
-    
-    # Install cloudflared
     apt-get update && apt-get install -y cloudflared
-
-    # Install and start the service with the provided token
     if ! systemctl is-active --quiet cloudflared; then
       cloudflared service install "${var.cloudflare_tunnel_token}" || true
       systemctl start cloudflared
