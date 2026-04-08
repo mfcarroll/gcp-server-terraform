@@ -169,6 +169,12 @@ resource "google_compute_instance" "default" {
   metadata_startup_script = <<-EOT
     #!/bin/bash
     set -e
+    
+    # Clean up default OS services to free Port 80
+    apt-get purge -y apache2 apache2-utils apache2-bin apache2.2-common || true
+    apt-get autoremove -y || true
+
+    # User & Permissions Setup
     if ! id "dev" &>/dev/null; then
         useradd -m -s /bin/bash dev
     fi
@@ -176,10 +182,13 @@ resource "google_compute_instance" "default" {
     chmod 0440 /etc/sudoers.d/dev
     groupadd docker || true
     usermod -aG docker dev
+    
+    # Cloudflare Tunnel Setup
     mkdir -p --mode=0755 /usr/share/keyrings
     curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg | tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
     echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list
     apt-get update && apt-get install -y cloudflared
+    
     if ! systemctl is-active --quiet cloudflared; then
       cloudflared service install "${var.cloudflare_tunnel_token}" || true
       systemctl start cloudflared
