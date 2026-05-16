@@ -46,6 +46,36 @@ resource "google_artifact_registry_repository" "docker_repo" {
   repository_id = "app-images"
   description   = "Docker repository for application images"
   format        = "DOCKER"
+
+  # 1. Always keep the image tagged 'latest'
+  cleanup_policy_dry_run = false
+  cleanup_policies {
+    id     = "keep-latest"
+    action = "KEEP"
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["latest"]
+    }
+  }
+
+  # 2. Always keep the 2 most recently pushed images (good for quick rollbacks)
+  cleanup_policies {
+    id     = "keep-2-recent"
+    action = "KEEP"
+    most_recent_versions {
+      keep_count = 1
+    }
+  }
+
+  # 3. Delete ANY image (tagged or untagged) older than 7 days
+  cleanup_policies {
+    id     = "delete-older-than-2d"
+    action = "DELETE"
+    condition {
+      tag_state  = "ANY"
+      older_than = "172800s" # 2 days in seconds
+    }
+  }
 }
 
 # --- PERMISSIONS: BUILDER (GitHub Actions) ---
